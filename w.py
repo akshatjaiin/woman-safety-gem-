@@ -1,10 +1,16 @@
 import os
 import json
-from . import constants  # some constants which we are using
+import constants  # some constants which we are using
 from dotenv import load_dotenv
 from random import randint
 from google.api_core import retry
 import google.generativeai as genai
+import base64
+
+with open('wonder.mp4', 'rb') as video_file:
+    video_data = video_file.read()
+    base64_video = base64.b64encode(video_data).decode('utf-8')
+
 
 load_dotenv()  # load environment variables
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))  # configuring model API
@@ -38,20 +44,18 @@ prompt = """
 Provide a description of the video.
 The description should also contain anything important which people say in the video.
 """
-
-# Create a video file part
-video_file = genai.Part.from_uri(
-    uri="gs://your-bucket/video.mp4",
-    mime_type="video/mp4",
-)
+# Prepare the video file as a Blob (if applicable)
+video_blob = {
+    "mime_type": "video/mp4",
+    "data": base64_video  # Ensure this is the correct way to reference your video
+}
 
 # Prepare the contents for the request
 contents = [
     {
-        "role": "user",
         "parts": [
-            video_file,
-            {"text": prompt}
+            {"text": prompt},  # Text prompt
+            video_blob         # Video blob
         ]
     }
 ]
