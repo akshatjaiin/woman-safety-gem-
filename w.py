@@ -1,72 +1,78 @@
+
 import os
-import json
-import constants  # some constants which we are using
-from dotenv import load_dotenv
-from random import randint
-from google.api_core import retry
+import time
 import google.generativeai as genai
-import base64
-
-with open('wonder.mp4', 'rb') as video_file:
-    video_data = video_file.read()
-    base64_video = base64.b64encode(video_data).decode('utf-8')
-
-
+from dotenv import load_dotenv
 load_dotenv()  # load environment variables
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))  # configuring model API
 
-model_name = 'gemini-1.5-flash'
 
-# Initialize the model with safety settings
+def upload_to_gemini(path, mime_type=None):
+  file = genai.upload_file(path, mime_type=mime_type)
+  print(f"Uploaded file '{file.display_name}' as: {file.uri}")
+  return file
+
+def wait_for_files_active(files):
+  """Waits for the given files to be active.
+
+  Some files uploaded to the Gemini API need to be processed before they can be
+  used as prompt inputs. The status can be seen by querying the file's "state"
+  field.
+
+  This implementation uses a simple blocking polling loop. Production code
+  should probably employ a more sophisticated approach.
+  """
+  print("Waiting for file processing...")
+  for name in (file.name for file in files):
+    file = genai.get_file(name)
+    while file.state.name == "PROCESSING":
+      print(".", end="", flush=True)
+      time.sleep(10)
+      file = genai.get_file(name)
+    if file.state.name != "ACTIVE":
+      raise Exception(f"File {file.name} failed to process")
+  print("...all files ready")
+
+# Create the model
+generation_config = {
+  "temperature": 1,
+  "top_p": 0.95,
+  "top_k": 64,
+  "max_output_tokens": 8192,
+  "response_mime_type": "text/plain",
+}
+
 model = genai.GenerativeModel(
-    model_name,
-    system_instruction=constants.BOT_PROMPT,
-    safety_settings=constants.SAFE,
+  model_name="gemini-1.5-flash",
+  generation_config=generation_config,
 )
 
-chat_history = []
-chat_history.append({'role': 'user', 'parts': f"{[constants.BOT_PROMPT]}"})
-chat_history.append({'role': 'model', 'parts': ['OK I will fill response back to user to continue chat with him.']})
-
-@retry.Retry(initial=5, maximum=3)  # Limiting retries to avoid long delays
-def send_message(message, history) -> None:
-    """Send a message to the conversation and return the response."""
-    convo = model.start_chat(history=history)
-    res = convo.send_message(message)
-    history.extend([
-        {'role': 'user', 'parts': message},
-        {'role': 'model', 'parts': res.text}
-    ])
-    return res
-
-# Define the prompt for analysis
-prompt = """
-Provide a description of the video.
-The description should also contain anything important which people say in the video.
-"""
-# Prepare the video file as a Blob (if applicable)
-video_blob = {
-    "mime_type": "video/mp4",
-    "data": base64_video  # Ensure this is the correct way to reference your video
-}
-
-# Prepare the contents for the request
-contents = [
-    {
-        "parts": [
-            {"text": prompt},  # Text prompt
-            video_blob         # Video blob
-        ]
-    }
+start = time.time()
+files = [
+  upload_to_gemini("wonder.mp4", mime_type="video/mp4"),
 ]
 
-# Set generation config to request JSON output
-generation_config = {
-    "response_mime_type": "application/json"
-}
+# Some files have a processing delay. Wait for them to be ready.
+wait_for_files_active(files)
 
-# Generate content
-response = model.generate_content(contents, generation_config=generation_config)
-
-# Print the JSON response
+chat_session = model.start_chat(
+  history=[
+    {
+      "role": "user",
+      "parts": [
+        files[0],
+      ],
+    },
+    {
+      "role": "user",
+      "parts": [
+        "hello analyse this ",
+      ],
+    },
+  ]
+)
+response = chat_session.send_message("whats in the pic")
+end = time.time()
+print(response)
+print(end-start)
 print(response.text)
